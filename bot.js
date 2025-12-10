@@ -10,12 +10,12 @@ const ADMIN_ID = process.env.ADMIN_ID || '913096324';
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
-// ВАЖНО: Это URL вашего приложения на Vercel
-const WEB_APP_URL = 'https://school-mini-app-pi.vercel.app';
+// URL вашего основного приложения на Vercel
+const MAIN_APP_URL = 'https://school-mini-app-pi.vercel.app';
 
 console.log('🚀 Запуск Telegram бота...');
 console.log(`👑 Админ ID: ${ADMIN_ID}`);
-console.log(`🌐 Веб-приложение: ${WEB_APP_URL}`);
+console.log(`📱 Основное приложение: ${MAIN_APP_URL}`);
 console.log(`🌐 Режим: ${NODE_ENV}`);
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
@@ -23,7 +23,7 @@ const bot = new TelegramBot(BOT_TOKEN);
 const app = express();
 app.use(express.json());
 
-// База данных SQLite
+// База данных SQLite (для бота)
 const db = new sqlite3.Database(path.join(__dirname, 'school.db'));
 
 // Создаем таблицы при первом запуске
@@ -164,6 +164,35 @@ function getPendingUsers() {
     });
 }
 
+// Функция для регистрации пользователя в основном приложении
+async function registerUserInMainApp(telegramId, fullName, role) {
+    try {
+        // Определяем окончательную роль (без 'pending_')
+        const finalRole = role.replace('pending_', '');
+        
+        const response = await fetch(`${MAIN_APP_URL}/api/register-user`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                telegram_id: telegramId,
+                full_name: fullName,
+                role: finalRole
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log(`✅ Пользователь ${telegramId} зарегистрирован в основном приложении`);
+        return result;
+    } catch (error) {
+        console.error(`❌ Ошибка регистрации в основном приложении:`, error);
+        return null;
+    }
+}
+
 // ==================== КОМАНДЫ БОТА ====================
 
 // Команда /start
@@ -181,6 +210,9 @@ bot.onText(/\/start/, async (msg) => {
         if (existingUser.status === 'active') {
             const roleText = existingUser.role.includes('teacher') ? 'учитель' : 'менеджер';
             
+            // Создаем URL с tgId для открытия приложения
+            const webAppUrl = `${MAIN_APP_URL}/?tgId=${userId}`;
+            
             await bot.sendMessage(chatId, 
                 `✅ Вы уже зарегистрированы как ${roleText}!\n\n` +
                 `👤 Имя: ${existingUser.full_name}\n` +
@@ -191,7 +223,7 @@ bot.onText(/\/start/, async (msg) => {
                         inline_keyboard: [[
                             {
                                 text: '📱 Открыть приложение',
-                                web_app: { url: WEB_APP_URL }
+                                web_app: { url: webAppUrl }
                             }
                         ]]
                     }
@@ -287,7 +319,7 @@ bot.on('message', async (msg) => {
             const tempData = JSON.parse(userState.temp_data || '{}');
             const role = tempData.role;
             
-            // Создаем пользователя
+            // Создаем пользователя в базе бота
             await createUser({
                 telegram_id: userId,
                 telegram_username: msg.from.username || null,
@@ -398,6 +430,19 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
         try {
             if (isApproved) {
                 const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+                // Регистрируем пользователя в основном приложении
+                const registrationResult = await registerUserInMainApp(
+                    targetUserId,
+                    targetUser.full_name,
+                    targetUser.role
+                );
+                
+                if (registrationResult) {
+                    console.log(`✅ Пользователь ${targetUserId} зарегистрирован в основном приложении`);
+                }
+                
+                // Создаем URL с tgId для открытия приложения
+                const webAppUrl = `${MAIN_APP_URL}/?tgId=${targetUserId}`;
                 
                 await bot.sendMessage(targetUserId,
                     `🎉 *Ваша заявка одобрена!*\n\n` +
@@ -409,7 +454,7 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
                             inline_keyboard: [[
                                 {
                                     text: '📱 Открыть приложение',
-                                    web_app: { url: WEB_APP_URL }
+                                    web_app: { url: webAppUrl }
                                 }
                             ]]
                         }
@@ -613,7 +658,7 @@ app.get('/', (req, res) => {
                     
                     <div class="info">
                         <p><strong>👑 Админ ID:</strong> ${ADMIN_ID}</p>
-                        <p><strong>🌐 Веб-приложение:</strong> ${WEB_APP_URL}</p>
+                        <p><strong>📱 Основное приложение:</strong> <a href="${MAIN_APP_URL}" target="_blank">${MAIN_APP_URL}</a></p>
                         <p><strong>🌐 Режим работы:</strong> ${NODE_ENV}</p>
                         <p><strong>🚀 Статус:</strong> Активен</p>
                         <p><strong>📅 Время сервера:</strong> ${new Date().toLocaleString('ru-RU')}</p>
@@ -626,10 +671,8 @@ app.get('/', (req, res) => {
                         <li>Выберите роль (учитель/менеджер)</li>
                         <li>Введите ФИО</li>
                         <li>Админ получит заявку на одобрение</li>
-                        <li>После одобрения откроется приложение: ${WEB_APP_URL}</li>
+                        <li>После одобрения откроется приложение: ${MAIN_APP_URL}</li>
                     </ol>
-                    
-                    <p><strong>📱 Приложение:</strong> <a href="${WEB_APP_URL}" target="_blank">${WEB_APP_URL}</a></p>
                 </div>
             </body>
         </html>
@@ -646,9 +689,8 @@ app.post('/webhook', (req, res) => {
 
 // Запускаем сервер
 app.listen(PORT, async () => {
-    console.log(`🌐 Сервер запущен на порту ${PORT}`);
+    console.log(`🌐 Сервер бота запущен на порту ${PORT}`);
     console.log(`📊 Статусная страница: http://localhost:${PORT}`);
-    console.log(`📱 Веб-приложение: ${WEB_APP_URL}`);
     
     // Настройка вебхука для продакшена
     if (NODE_ENV === 'production') {
