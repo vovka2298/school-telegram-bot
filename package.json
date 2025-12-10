@@ -15,13 +15,13 @@
     "schedule",
     "registration"
   ],
-  "author": "Your Name",
+  "author": "Владимир",
   "license": "MIT",
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
-    "sqlite3": "^5.1.7",
     "dotenv": "^16.0.0",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "node-fetch": "^2.7.0"
   },
   "engines": {
     "node": ">=18.0.0"
