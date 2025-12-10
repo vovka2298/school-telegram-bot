@@ -20,7 +20,6 @@ const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzd
 
 console.log('🚀 Запуск Telegram бота...');
 console.log(`👑 Админ ID: ${ADMIN_ID}`);
-console.log(`🔑 API Key: ${SUPABASE_KEY.substring(0, 10)}...`);
 console.log(`🔗 Supabase URL: ${SUPABASE_URL}`);
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
@@ -36,68 +35,49 @@ const createHeaders = (useServiceKey = false) => ({
   'Prefer': 'return=representation'
 });
 
-// ==================== УЛУЧШЕННЫЕ ФУНКЦИИ ====================
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 // Тест подключения к Supabase
 async function testSupabaseConnection() {
   try {
-    console.log('🔗 Тестируем подключение к Supabase...');
-    
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/users?select=count`,
       { headers: createHeaders() }
     );
     
-    console.log(`📊 Статус подключения: ${response.status} ${response.statusText}`);
-    
-    if (response.ok) {
-      console.log('✅ Подключение к Supabase успешно');
-      return true;
-    } else {
-      const errorText = await response.text();
-      console.error('❌ Ошибка подключения:', errorText);
-      return false;
-    }
+    console.log(`📊 Подключение: ${response.status} ${response.statusText}`);
+    return response.ok;
   } catch (error) {
     console.error('❌ Ошибка подключения:', error.message);
     return false;
   }
 }
 
-// Получить пользователя (простая версия)
+// Получить пользователя
 async function getUser(telegramId) {
   try {
-    console.log(`🔍 Поиск пользователя ${telegramId}...`);
-    
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}`,
-      { 
-        method: 'GET',
-        headers: createHeaders()
-      }
+      { headers: createHeaders() }
     );
-    
-    console.log(`📊 Статус поиска: ${response.status}`);
     
     if (response.ok) {
       const users = await response.json();
-      console.log(`👤 Найдено пользователей: ${users.length}`);
       return users.length > 0 ? users[0] : null;
-    } else {
-      const errorText = await response.text();
-      console.error('❌ Ошибка поиска:', errorText);
-      return null;
     }
+    
+    console.error(`❌ Ошибка поиска пользователя ${telegramId}:`, response.status);
+    return null;
   } catch (error) {
     console.error('❌ Ошибка getUser:', error.message);
     return null;
   }
 }
 
-// СОЗДАТЬ ПОЛЬЗОВАТЕЛЯ (упрощенная версия)
+// Создать пользователя (УПРОЩЕННАЯ ВЕРСИЯ)
 async function createUser(telegramId, fullName, role = 'teacher') {
   try {
-    console.log(`➕ Создание пользователя: ${telegramId} (${fullName}) как ${role}`);
+    console.log(`➕ Создание пользователя: ${telegramId} (${fullName})`);
     
     const userData = {
       telegram_id: telegramId,
@@ -107,18 +87,18 @@ async function createUser(telegramId, fullName, role = 'teacher') {
       created_at: new Date().toISOString()
     };
     
-    console.log('📦 Отправляемые данные:', userData);
+    console.log('📦 Данные:', userData);
     
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/users`,
       {
         method: 'POST',
-        headers: createHeaders(true), // Используем service key для записи
+        headers: createHeaders(true),
         body: JSON.stringify(userData)
       }
     );
     
-    console.log(`📊 Статус создания: ${response.status} ${response.statusText}`);
+    console.log(`📊 Статус: ${response.status} ${response.statusText}`);
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -127,12 +107,109 @@ async function createUser(telegramId, fullName, role = 'teacher') {
     }
     
     const result = await response.json();
-    console.log('✅ Пользователь создан:', result);
+    console.log('✅ Пользователь создан');
     return result[0];
     
   } catch (error) {
     console.error('❌ Ошибка createUser:', error.message);
     return null;
+  }
+}
+
+// Обновить статус пользователя (РАБОЧАЯ ВЕРСИЯ)
+async function updateUserStatus(telegramId, status, approvedBy = null) {
+  try {
+    console.log(`🔄 Обновление статуса ${telegramId} -> ${status}`);
+    
+    const updateData = {
+      status: status,
+      updated_at: new Date().toISOString()
+    };
+    
+    if (status === 'active' && approvedBy) {
+      updateData.approved_by = approvedBy;
+      updateData.approved_at = new Date().toISOString();
+    }
+    
+    console.log('📦 Данные обновления:', updateData);
+    
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}`,
+      {
+        method: 'PATCH',
+        headers: createHeaders(true),
+        body: JSON.stringify(updateData)
+      }
+    );
+    
+    console.log(`📊 Статус обновления: ${response.status} ${response.statusText}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Ошибка обновления:', errorText);
+      return false;
+    }
+    
+    console.log('✅ Статус обновлен');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Ошибка updateUserStatus:', error.message);
+    return false;
+  }
+}
+
+// Создать профиль учителя (после одобрения)
+async function createTeacherProfile(teacherId, fullName) {
+  try {
+    console.log(`👨‍🏫 Создание профиля учителя ID: ${teacherId}`);
+    
+    const profileData = {
+      teacher_id: teacherId,
+      gender: 'male',
+      bio: `Преподаватель ${fullName}`,
+      available_for_new_students: true,
+      created_at: new Date().toISOString()
+    };
+    
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/teacher_profiles`,
+      {
+        method: 'POST',
+        headers: createHeaders(true),
+        body: JSON.stringify(profileData)
+      }
+    );
+    
+    console.log(`📊 Статус создания профиля: ${response.status}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn('⚠️ Ошибка создания профиля:', errorText);
+    } else {
+      console.log('✅ Профиль учителя создан');
+    }
+    
+  } catch (error) {
+    console.error('❌ Ошибка createTeacherProfile:', error.message);
+  }
+}
+
+// Получить ожидающих пользователей
+async function getPendingUsers() {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?status=eq.pending&order=created_at.desc`,
+      { headers: createHeaders() }
+    );
+    
+    if (response.ok) {
+      return await response.json();
+    }
+    return [];
+  } catch (error) {
+    console.error('Ошибка получения ожидающих:', error);
+    return [];
   }
 }
 
@@ -146,7 +223,7 @@ bot.onText(/\/start/, async (msg) => {
   
   console.log(`\n=== /start от ${userId} (${username}) ===`);
   
-  // Тестируем подключение
+  // Проверяем подключение
   const connected = await testSupabaseConnection();
   if (!connected) {
     await bot.sendMessage(chatId, 
@@ -191,8 +268,6 @@ bot.onText(/\/start/, async (msg) => {
       );
       return;
     }
-  } else {
-    console.log(`👤 Пользователь ${userId} не найден, начинаем регистрацию`);
   }
   
   // Новая регистрация
@@ -203,7 +278,6 @@ bot.onText(/\/start/, async (msg) => {
     { parse_mode: 'HTML' }
   );
   
-  // Сохраняем что пользователь начал регистрацию
   console.log(`📝 Начата регистрация для ${userId}`);
 });
 
@@ -292,7 +366,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// Отправка уведомления админу
+// Отправка уведомления админу о новой заявке
 async function sendAdminNotification(userId, fullName, role) {
   try {
     const roleText = role === 'teacher' ? 'учителя' : 'менеджера';
@@ -327,7 +401,7 @@ _Рассмотреть заявку:_
   }
 }
 
-// Обработка callback от админа
+// Обработка callback от админа (ОБНОВЛЕННАЯ ВЕРСИЯ)
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const adminId = query.from.id.toString();
@@ -336,6 +410,8 @@ bot.on('callback_query', async (query) => {
   console.log(`\n🔄 Callback от ${adminId}: ${data}`);
   
   try {
+    await bot.answerCallbackQuery(query.id, { text: 'Обработка...' });
+    
     if (data.startsWith('approve_')) {
       const targetUserId = data.replace('approve_', '');
       await handleAdminApprove(adminId, targetUserId, query);
@@ -351,134 +427,328 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-// Одобрение заявки
+// Одобрение заявки (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 async function handleAdminApprove(adminId, targetUserId, query) {
-  if (adminId !== ADMIN_ID) {
-    await bot.answerCallbackQuery(query.id, { text: '⛔ Нет прав' });
-    return;
-  }
+  console.log(`\n✅ === ОДОБРЕНИЕ ЗАЯВКИ ===`);
+  console.log(`👑 Админ: ${adminId}`);
+  console.log(`👤 Пользователь: ${targetUserId}`);
   
   try {
-    console.log(`✅ Админ ${adminId} одобряет пользователя ${targetUserId}`);
-    
-    // Обновляем статус пользователя
-    const updateResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${targetUserId}`,
-      {
-        method: 'PATCH',
-        headers: createHeaders(true),
-        body: JSON.stringify({
-          status: 'active',
-          approved_by: adminId,
-          approved_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-      }
-    );
-    
-    if (!updateResponse.ok) {
-      throw new Error('Не удалось обновить статус');
+    // Проверяем права
+    if (adminId !== ADMIN_ID) {
+      console.log('⛔ Нет прав доступа');
+      await bot.answerCallbackQuery(query.id, { text: '⛔ Нет прав' });
+      return;
     }
     
-    // Получаем данные пользователя
+    // Получаем пользователя
     const user = await getUser(targetUserId);
     
+    if (!user) {
+      console.log(`❌ Пользователь ${targetUserId} не найден`);
+      await bot.answerCallbackQuery(query.id, { text: 'Пользователь не найден' });
+      return;
+    }
+    
+    console.log(`👤 Найден пользователь: ${user.first_name} (статус: ${user.status})`);
+    
+    // ОБНОВЛЯЕМ СТАТУС ПОЛЬЗОВАТЕЛЯ
+    const updated = await updateUserStatus(targetUserId, 'active', adminId);
+    
+    if (!updated) {
+      throw new Error('Не удалось обновить статус пользователя');
+    }
+    
+    console.log(`🔄 Статус пользователя обновлен на "active"`);
+    
+    // Если это учитель - создаем профиль
+    if (user.user_type === 'teacher') {
+      await createTeacherProfile(user.id, user.first_name);
+      console.log(`👨‍🏫 Профиль учителя создан`);
+    }
+    
     // Обновляем сообщение админу
+    const roleText = user.user_type === 'teacher' ? 'учитель' : 'менеджер';
+    const individualAppUrl = `${MAIN_APP_URL}/?tg_id=${targetUserId}`;
+    
     await bot.editMessageText(
       `✅ *Заявка одобрена*\n\n` +
-      `👤 ${user?.first_name || 'Пользователь'}\n` +
-      `🆔 ${targetUserId}\n` +
-      `👨‍🏫 Учитель\n` +
-      `⏱️ ${new Date().toLocaleString('ru-RU')}\n\n` +
+      `👤 *Имя:* ${user.first_name}\n` +
+      `🆔 *ID:* ${targetUserId}\n` +
+      `👨‍🏫 *Роль:* ${roleText}\n` +
+      `⏱️ *Время:* ${new Date().toLocaleString('ru-RU')}\n\n` +
       `🔗 *Ссылка для пользователя:*\n` +
-      `${MAIN_APP_URL}/?tg_id=${targetUserId}`,
+      `${individualAppUrl}`,
       {
         chat_id: query.message.chat.id,
         message_id: query.message.message_id,
-        parse_mode: 'Markdown'
-      }
-    );
-    
-    // Уведомляем пользователя
-    const individualAppUrl = `${MAIN_APP_URL}/?tg_id=${targetUserId}`;
-    
-    await bot.sendMessage(targetUserId,
-      `🎉 *Поздравляем! Ваша заявка одобрена!*\n\n` +
-      `Теперь вы зарегистрированы как учитель.\n\n` +
-      `📱 *Ваше персональное приложение:*\n` +
-      `${individualAppUrl}\n\n` +
-      `Нажмите кнопку ниже, чтобы открыть:`,
-      {
         parse_mode: 'Markdown',
         reply_markup: {
-          inline_keyboard: [[
-            {
-              text: '📱 Открыть мое приложение',
-              web_app: { url: individualAppUrl }
-            }
-          ]]
+          inline_keyboard: []
         }
       }
     );
     
-    console.log(`👌 Пользователь ${targetUserId} уведомлен`);
-    await bot.answerCallbackQuery(query.id, { text: 'Заявка одобрена' });
+    console.log(`📝 Сообщение админу обновлено`);
+    
+    // УВЕДОМЛЯЕМ ПОЛЬЗОВАТЕЛЯ
+    try {
+      const userTypeText = user.user_type === 'teacher' ? 'учитель' : 'менеджер';
+      
+      await bot.sendMessage(targetUserId,
+        `🎉 *Поздравляем! Ваша заявка одобрена!*\n\n` +
+        `Теперь вы зарегистрированы как ${userTypeText}.\n\n` +
+        `📱 *Ваше персональное приложение:*\n` +
+        `${individualAppUrl}\n\n` +
+        `Нажмите кнопку ниже, чтобы открыть:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              {
+                text: '📱 Открыть мое приложение',
+                web_app: { url: individualAppUrl }
+              }
+            ]]
+          }
+        }
+      );
+      
+      console.log(`📨 Пользователь ${targetUserId} уведомлен`);
+      
+    } catch (notifyError) {
+      console.error(`❌ Не удалось уведомить пользователя:`, notifyError.message);
+    }
+    
+    await bot.answerCallbackQuery(query.id, { text: '✅ Заявка одобрена' });
+    console.log(`🎉 === ОДОБРЕНИЕ ЗАВЕРШЕНО ===\n`);
     
   } catch (error) {
-    console.error('❌ Ошибка одобрения:', error);
-    await bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
+    console.error('❌ Критическая ошибка одобрения:', error);
+    await bot.answerCallbackQuery(query.id, { 
+      text: `❌ Ошибка: ${error.message.substring(0, 50)}...` 
+    });
   }
 }
 
-// Отклонение заявки
+// Отклонение заявки (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 async function handleAdminReject(adminId, targetUserId, query) {
-  if (adminId !== ADMIN_ID) {
-    await bot.answerCallbackQuery(query.id, { text: '⛔ Нет прав' });
-    return;
-  }
+  console.log(`\n❌ === ОТКЛОНЕНИЕ ЗАЯВКИ ===`);
+  console.log(`👑 Админ: ${adminId}`);
+  console.log(`👤 Пользователь: ${targetUserId}`);
   
   try {
-    console.log(`❌ Админ ${adminId} отклоняет пользователя ${targetUserId}`);
+    // Проверяем права
+    if (adminId !== ADMIN_ID) {
+      console.log('⛔ Нет прав доступа');
+      await bot.answerCallbackQuery(query.id, { text: '⛔ Нет прав' });
+      return;
+    }
     
-    // Обновляем статус
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${targetUserId}`,
-      {
-        method: 'PATCH',
-        headers: createHeaders(true),
-        body: JSON.stringify({
-          status: 'rejected',
-          updated_at: new Date().toISOString()
-        })
-      }
-    );
+    // Получаем пользователя
+    const user = await getUser(targetUserId);
+    
+    if (!user) {
+      console.log(`❌ Пользователь ${targetUserId} не найден`);
+      await bot.answerCallbackQuery(query.id, { text: 'Пользователь не найден' });
+      return;
+    }
+    
+    // ОБНОВЛЯЕМ СТАТУС
+    const updated = await updateUserStatus(targetUserId, 'rejected', adminId);
+    
+    if (!updated) {
+      throw new Error('Не удалось обновить статус');
+    }
+    
+    console.log(`🔄 Статус пользователя обновлен на "rejected"`);
     
     // Обновляем сообщение админу
     await bot.editMessageText(
       `❌ *Заявка отклонена*\n\n` +
-      `🆔 ${targetUserId}\n` +
-      `⏱️ ${new Date().toLocaleString('ru-RU')}`,
+      `👤 *Имя:* ${user.first_name}\n` +
+      `🆔 *ID:* ${targetUserId}\n` +
+      `⏱️ *Время:* ${new Date().toLocaleString('ru-RU')}`,
       {
         chat_id: query.message.chat.id,
         message_id: query.message.message_id,
-        parse_mode: 'Markdown'
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: []
+        }
       }
     );
     
-    // Уведомляем пользователя
-    await bot.sendMessage(targetUserId,
-      `❌ *Ваша заявка отклонена*\n\n` +
-      `Администратор отклонил вашу заявку на регистрацию.\n` +
-      `Если это ошибка, свяжитесь с администратором.`
-    );
+    console.log(`📝 Сообщение админу обновлено`);
     
-    await bot.answerCallbackQuery(query.id, { text: 'Заявка отклонена' });
+    // УВЕДОМЛЯЕМ ПОЛЬЗОВАТЕЛЯ
+    try {
+      await bot.sendMessage(targetUserId,
+        `❌ *Ваша заявка отклонена*\n\n` +
+        `Администратор отклонил вашу заявку на регистрацию.\n\n` +
+        `*Возможные причины:*\n` +
+        `• Неполная информация\n` +
+        `• Ошибка в данных\n` +
+        `• Другая причина\n\n` +
+        `Если вы считаете это ошибкой, свяжитесь с администратором.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      console.log(`📨 Пользователь ${targetUserId} уведомлен об отклонении`);
+      
+    } catch (notifyError) {
+      console.error(`❌ Не удалось уведомить пользователя:`, notifyError.message);
+    }
+    
+    await bot.answerCallbackQuery(query.id, { text: '❌ Заявка отклонена' });
+    console.log(`🎉 === ОТКЛОНЕНИЕ ЗАВЕРШЕНО ===\n`);
     
   } catch (error) {
-    console.error('❌ Ошибка отклонения:', error);
-    await bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
+    console.error('❌ Критическая ошибка отклонения:', error);
+    await bot.answerCallbackQuery(query.id, { 
+      text: `❌ Ошибка: ${error.message.substring(0, 50)}...` 
+    });
   }
 }
+
+// Команда /admin для админки
+bot.onText(/\/admin/, async (msg) => {
+  if (msg.from.id.toString() !== ADMIN_ID) {
+    await bot.sendMessage(msg.chat.id, '⛔ У вас нет прав доступа');
+    return;
+  }
+  
+  try {
+    // Получаем статистику
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?select=user_type,status`,
+      { headers: createHeaders() }
+    );
+    
+    let stats = {
+      pending: 0,
+      activeTeachers: 0,
+      activeManagers: 0,
+      blocked: 0,
+      total: 0
+    };
+    
+    if (response.ok) {
+      const allUsers = await response.json();
+      stats.total = allUsers.length;
+      
+      allUsers.forEach(user => {
+        if (user.status === 'pending') stats.pending++;
+        if (user.status === 'active') {
+          if (user.user_type === 'teacher') stats.activeTeachers++;
+          if (user.user_type === 'manager') stats.activeManagers++;
+        }
+        if (user.status === 'blocked') stats.blocked++;
+      });
+    }
+    
+    let message = `👑 *Панель администратора*\n\n`;
+    message += `👥 *Всего пользователей:* ${stats.total}\n`;
+    message += `⏳ *Ожидают одобрения:* ${stats.pending}\n`;
+    message += `👨‍🏫 *Активных учителей:* ${stats.activeTeachers}\n`;
+    message += `👨‍💼 *Активных менеджеров:* ${stats.activeManagers}\n`;
+    message += `🚫 *Заблокировано:* ${stats.blocked}\n\n`;
+    
+    // Список ожидающих
+    const pendingUsers = await getPendingUsers();
+    
+    if (pendingUsers.length > 0) {
+      message += `*Последние заявки:*\n`;
+      pendingUsers.forEach((user, index) => {
+        const role = user.user_type === 'teacher' ? '👨‍🏫 Учитель' : '👨‍💼 Менеджер';
+        message += `${index + 1}. ${user.first_name} - ${role} (ID: ${user.telegram_id})\n`;
+      });
+    } else {
+      message += `✅ Нет ожидающих заявок`;
+    }
+    
+    await bot.sendMessage(msg.chat.id, message, { parse_mode: 'Markdown' });
+    
+  } catch (error) {
+    console.error('❌ Ошибка /admin:', error);
+    await bot.sendMessage(msg.chat.id, '❌ Ошибка при получении статистики');
+  }
+});
+
+// Команда /myinfo
+bot.onText(/\/myinfo/, async (msg) => {
+  const userId = msg.from.id.toString();
+  const user = await getUser(userId);
+  
+  if (!user) {
+    await bot.sendMessage(msg.chat.id, 'Вы еще не зарегистрированы. Используйте /start');
+    return;
+  }
+  
+  const statusMap = {
+    'pending': '⏳ Ожидание одобрения',
+    'active': '✅ Активен',
+    'blocked': '❌ Заблокирован',
+    'rejected': '❌ Отклонен'
+  };
+  
+  const roleMap = {
+    'teacher': '👨‍🏫 Учитель',
+    'manager': '👨‍💼 Менеджер',
+    'admin': '👑 Администратор'
+  };
+  
+  const message = `
+📋 *Ваши данные:*
+
+👤 *Имя:* ${user.first_name}
+🆔 *Telegram ID:* ${userId}
+${roleMap[user.user_type] || user.user_type}
+📊 *Статус:* ${statusMap[user.status] || user.status}
+📅 *Зарегистрирован:* ${new Date(user.created_at).toLocaleDateString('ru-RU')}
+${user.status === 'active' ? `\n🔗 *Ваше приложение:* ${MAIN_APP_URL}/?tg_id=${userId}` : ''}
+  `;
+  
+  await bot.sendMessage(msg.chat.id, message, { parse_mode: 'Markdown' });
+});
+
+// Команда /link (получить ссылку на приложение)
+bot.onText(/\/link/, async (msg) => {
+  const userId = msg.from.id.toString();
+  const user = await getUser(userId);
+  
+  if (!user) {
+    await bot.sendMessage(msg.chat.id, 'Вы еще не зарегистрированы. Используйте /start');
+    return;
+  }
+  
+  if (user.status !== 'active') {
+    await bot.sendMessage(msg.chat.id, 
+      `Ваш аккаунт не активен (статус: ${user.status}). Дождитесь одобрения администратора.`
+    );
+    return;
+  }
+  
+  // СОЗДАЕМ ИНДИВИДУАЛЬНУЮ ССЫЛКУ
+  const individualAppUrl = `${MAIN_APP_URL}/?tg_id=${userId}`;
+  
+  await bot.sendMessage(msg.chat.id,
+    `🔗 *Ваша персональная ссылка:*\n\n` +
+    `${individualAppUrl}\n\n` +
+    `Нажмите кнопку ниже, чтобы открыть приложение:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          {
+            text: '📱 Открыть МОЕ приложение',
+            web_app: { url: individualAppUrl }
+          }
+        ]]
+      }
+    }
+  );
+});
 
 // ==================== API ДЛЯ ОТЛАДКИ ====================
 
@@ -486,22 +756,62 @@ app.get('/debug', async (req, res) => {
   try {
     // Проверяем таблицу users
     const usersResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?select=telegram_id,first_name,user_type,status&order=created_at.desc&limit=10`,
+      `${SUPABASE_URL}/rest/v1/users?select=telegram_id,first_name,user_type,status,created_at&order=created_at.desc&limit=20`,
       { headers: createHeaders() }
     );
     
     const users = usersResponse.ok ? await usersResponse.json() : [];
     
+    // Проверяем teacher_profiles
+    const profilesResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/teacher_profiles?select=count`,
+      { headers: createHeaders() }
+    );
+    
+    const profilesCount = profilesResponse.ok ? (await profilesResponse.json())[0]?.count : 0;
+    
     res.json({
       bot: 'running',
+      admin: ADMIN_ID,
       supabase: SUPABASE_URL,
-      usersCount: users.length,
-      users: users,
-      testConnection: await testSupabaseConnection()
+      users: {
+        total: users.length,
+        pending: users.filter(u => u.status === 'pending').length,
+        active: users.filter(u => u.status === 'active').length,
+        data: users
+      },
+      teacher_profiles: profilesCount,
+      main_app: MAIN_APP_URL
     });
     
   } catch (error) {
     res.json({ error: error.message });
+  }
+});
+
+// Тестовый API для создания пользователя
+app.post('/api/create-test-user', async (req, res) => {
+  try {
+    const { telegram_id, first_name } = req.body;
+    
+    if (!telegram_id || !first_name) {
+      return res.status(400).json({ error: 'Необходимы telegram_id и first_name' });
+    }
+    
+    const user = await createUser(telegram_id, first_name, 'teacher');
+    
+    if (user) {
+      res.json({ 
+        success: true, 
+        message: 'Тестовый пользователь создан',
+        user: user 
+      });
+    } else {
+      res.status(500).json({ error: 'Не удалось создать пользователя' });
+    }
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -511,12 +821,19 @@ const port = process.env.PORT || 3001;
 app.listen(port, async () => {
   console.log(`\n🌐 Сервер бота запущен на порту ${port}`);
   console.log(`🔍 Отладка: http://localhost:${port}/debug`);
+  console.log(`👑 Админ: ${ADMIN_ID}`);
   
   // Тестируем подключение при старте
-  await testSupabaseConnection();
+  const connected = await testSupabaseConnection();
+  
+  if (connected) {
+    console.log('✅ Подключение к Supabase успешно');
+  } else {
+    console.log('❌ Проблемы с подключением к Supabase');
+  }
   
   // Запускаем polling
-  console.log('🔁 Запускаем polling режим');
+  console.log('🤖 Бот запущен в режиме polling');
   bot.startPolling();
 });
 
