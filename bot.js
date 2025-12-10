@@ -10,8 +10,12 @@ const ADMIN_ID = process.env.ADMIN_ID || '913096324';
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
+// ВАЖНО: Это URL вашего приложения на Vercel
+const WEB_APP_URL = 'https://school-mini-app-pi.vercel.app';
+
 console.log('🚀 Запуск Telegram бота...');
 console.log(`👑 Админ ID: ${ADMIN_ID}`);
+console.log(`🌐 Веб-приложение: ${WEB_APP_URL}`);
 console.log(`🌐 Режим: ${NODE_ENV}`);
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
@@ -176,7 +180,6 @@ bot.onText(/\/start/, async (msg) => {
     if (existingUser) {
         if (existingUser.status === 'active') {
             const roleText = existingUser.role.includes('teacher') ? 'учитель' : 'менеджер';
-            const webAppUrl = 'https://school-mini-app-pi.vercel.app'; // ЗАМЕНИТЕ на ваш URL
             
             await bot.sendMessage(chatId, 
                 `✅ Вы уже зарегистрированы как ${roleText}!\n\n` +
@@ -188,7 +191,7 @@ bot.onText(/\/start/, async (msg) => {
                         inline_keyboard: [[
                             {
                                 text: '📱 Открыть приложение',
-                                web_app: { url: webAppUrl }
+                                web_app: { url: WEB_APP_URL }
                             }
                         ]]
                     }
@@ -395,7 +398,6 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
         try {
             if (isApproved) {
                 const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
-                const webAppUrl = 'https://school-mini-app-pi.vercel.app'; // ЗАМЕНИТЕ на ваш URL
                 
                 await bot.sendMessage(targetUserId,
                     `🎉 *Ваша заявка одобрена!*\n\n` +
@@ -407,7 +409,7 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
                             inline_keyboard: [[
                                 {
                                     text: '📱 Открыть приложение',
-                                    web_app: { url: webAppUrl }
+                                    web_app: { url: WEB_APP_URL }
                                 }
                             ]]
                         }
@@ -611,6 +613,7 @@ app.get('/', (req, res) => {
                     
                     <div class="info">
                         <p><strong>👑 Админ ID:</strong> ${ADMIN_ID}</p>
+                        <p><strong>🌐 Веб-приложение:</strong> ${WEB_APP_URL}</p>
                         <p><strong>🌐 Режим работы:</strong> ${NODE_ENV}</p>
                         <p><strong>🚀 Статус:</strong> Активен</p>
                         <p><strong>📅 Время сервера:</strong> ${new Date().toLocaleString('ru-RU')}</p>
@@ -623,11 +626,10 @@ app.get('/', (req, res) => {
                         <li>Выберите роль (учитель/менеджер)</li>
                         <li>Введите ФИО</li>
                         <li>Админ получит заявку на одобрение</li>
+                        <li>После одобрения откроется приложение: ${WEB_APP_URL}</li>
                     </ol>
                     
-                    <a href="https://t.me/your_bot_username" class="bot-link" target="_blank">
-                        📱 Открыть бота в Telegram
-                    </a>
+                    <p><strong>📱 Приложение:</strong> <a href="${WEB_APP_URL}" target="_blank">${WEB_APP_URL}</a></p>
                 </div>
             </body>
         </html>
@@ -646,6 +648,7 @@ app.post('/webhook', (req, res) => {
 app.listen(PORT, async () => {
     console.log(`🌐 Сервер запущен на порту ${PORT}`);
     console.log(`📊 Статусная страница: http://localhost:${PORT}`);
+    console.log(`📱 Веб-приложение: ${WEB_APP_URL}`);
     
     // Настройка вебхука для продакшена
     if (NODE_ENV === 'production') {
