@@ -1,17 +1,27 @@
 {
   "name": "school-telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for teacher registration",
+  "description": "Telegram bot for school teacher and manager registration",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "nodemon bot.js"
+    "dev": "nodemon bot.js",
+    "render-build": "echo 'No build needed for Node.js'"
   },
+  "keywords": [
+    "telegram",
+    "bot",
+    "school",
+    "schedule",
+    "registration"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
-    "express": "^4.21.0",
-    "node-fetch": "^2.7.0",
-    "dotenv": "^16.0.0"
+    "sqlite3": "^5.1.7",
+    "dotenv": "^16.0.0",
+    "express": "^4.21.0"
   },
   "engines": {
     "node": ">=18.0.0"
