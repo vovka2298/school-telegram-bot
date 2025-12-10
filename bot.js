@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const path = require('path');
-const fetch = require('node-fetch'); // Добавляем для работы с Supabase
+const fetch = require('node-fetch');
 require('dotenv').config();
 
 // ==================== КОНФИГУРАЦИЯ ====================
@@ -13,7 +13,7 @@ const NODE_ENV = process.env.NODE_ENV || 'production';
 // URL вашего основного приложения на Vercel
 const MAIN_APP_URL = 'https://school-mini-app-pi.vercel.app';
 
-// Конфигурация Supabase (ТА ЖЕ САМАЯ БАЗА!)
+// Конфигурация Supabase (ТА ЖЕ БАЗА!)
 const SUPABASE_URL = 'https://rtywenfvaoxsjdkulmdk.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_WhiVd5day72hRoTKiFtiIQ_sP2wu4_S';
 const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ0eXdlbmZ2YW94c2pka3VsbWRrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM3NzEzNiwiZXhwIjoyMDgwOTUzMTM2fQ.wy2D8H0mS-c1JqJFF2O-IPk3bgvVLMjHJUTzRX2fx-0';
@@ -39,7 +39,7 @@ const createHeaders = (useServiceKey = false) => ({
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
-// Получить состояние пользователя из Supabase
+// Получить состояние пользователя
 async function getUserState(telegramId) {
   try {
     const response = await fetch(
@@ -58,8 +58,8 @@ async function getUserState(telegramId) {
   }
 }
 
-// Установить состояние пользователя в Supabase
-async function setUserState(telegramId, state, tempData = null) {
+// Установить состояние пользователя
+async function setUserState(telegramId, state, stepData = {}) {
   try {
     await fetch(
       `${SUPABASE_URL}/rest/v1/user_states`,
@@ -72,7 +72,7 @@ async function setUserState(telegramId, state, tempData = null) {
         body: JSON.stringify({
           telegram_id: telegramId,
           state: state,
-          temp_data: tempData
+          step_data: stepData
         })
       }
     );
@@ -100,7 +100,7 @@ async function deleteUserState(telegramId) {
   }
 }
 
-// Получить пользователя из Supabase
+// Получить пользователя
 async function getUser(telegramId) {
   try {
     const response = await fetch(
@@ -119,9 +119,11 @@ async function getUser(telegramId) {
   }
 }
 
-// Создать пользователя в Supabase (ОСНОВНАЯ ФУНКЦИЯ РЕГИСТРАЦИИ!)
+// Создать пользователя (РЕГИСТРАЦИЯ УЧИТЕЛЯ)
 async function createUser(userData) {
   try {
+    const userType = userData.role === 'teacher' ? 'teacher' : 'manager';
+    
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/users`,
       {
@@ -131,8 +133,9 @@ async function createUser(userData) {
           telegram_id: userData.telegram_id,
           username: userData.telegram_username,
           first_name: userData.full_name,
-          role: userData.role,
-          status: userData.status || 'pending',
+          last_name: '',
+          user_type: userType,
+          status: 'pending',
           created_at: new Date().toISOString()
         })
       }
@@ -145,15 +148,16 @@ async function createUser(userData) {
     }
     
     const newUser = await response.json();
-    console.log(`✅ Пользователь создан в Supabase: ${userData.telegram_id} (${userData.full_name})`);
+    console.log(`✅ Пользователь создан: ${userData.telegram_id} (${userData.full_name}) как ${userType}`);
     return newUser[0];
+    
   } catch (error) {
     console.error('Ошибка создания пользователя:', error);
     return null;
   }
 }
 
-// Обновить статус пользователя в Supabase
+// Обновить статус пользователя
 async function updateUserStatus(telegramId, status, approvedBy = null) {
   try {
     const updateData = {
@@ -182,7 +186,67 @@ async function updateUserStatus(telegramId, status, approvedBy = null) {
   }
 }
 
-// Получить всех ожидающих пользователей
+// Создать профиль учителя (после одобрения)
+async function createTeacherProfile(teacherId, fullName) {
+  try {
+    // Создаем профиль
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/teacher_profiles`,
+      {
+        method: 'POST',
+        headers: {
+          ...createHeaders(true),
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          teacher_id: teacherId,
+          gender: 'male',
+          city: '',
+          bio: `Преподаватель ${fullName}`,
+          available_for_new_students: true
+        })
+      }
+    );
+    
+    // Добавляем базовые предметы (математика и физика)
+    const mathSubjects = await fetch(
+      `${SUPABASE_URL}/rest/v1/subjects?category=eq.Математика&limit=3`,
+      { headers: createHeaders() }
+    ).then(r => r.ok ? r.json() : []);
+    
+    const physicsSubjects = await fetch(
+      `${SUPABASE_URL}/rest/v1/subjects?category=eq.Физика&limit=2`,
+      { headers: createHeaders() }
+    ).then(r => r.ok ? r.json() : []);
+    
+    const allSubjects = [...mathSubjects, ...physicsSubjects];
+    
+    if (allSubjects.length > 0) {
+      const subjectData = allSubjects.map(subject => ({
+        teacher_id: teacherId,
+        subject_id: subject.id,
+        is_active: true,
+        price_per_hour: 1500.00
+      }));
+      
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/teacher_subjects`,
+        {
+          method: 'POST',
+          headers: createHeaders(true),
+          body: JSON.stringify(subjectData)
+        }
+      );
+    }
+    
+    console.log(`📚 Создан профиль учителя ID: ${teacherId}`);
+    
+  } catch (error) {
+    console.error('Ошибка создания профиля учителя:', error);
+  }
+}
+
+// Получить ожидающих пользователей
 async function getPendingUsers() {
   try {
     const response = await fetch(
@@ -197,92 +261,6 @@ async function getPendingUsers() {
   } catch (error) {
     console.error('Ошибка получения ожидающих:', error);
     return [];
-  }
-}
-
-// Регистрация пользователя в основном приложении (теперь уже в той же базе!)
-async function registerUserInMainApp(telegramId, fullName, role) {
-  try {
-    // Преобразуем роль из формата бота в формат основного приложения
-    const mainAppRole = role.replace('pending_', '');
-    
-    // Проверяем, есть ли пользователь уже в основной базе
-    const existingUser = await getUser(telegramId);
-    
-    if (existingUser && existingUser.status === 'active') {
-      console.log(`ℹ️ Пользователь ${telegramId} уже активен в системе`);
-      return { ok: true, message: 'Пользователь уже активен' };
-    }
-    
-    // Обновляем статус на active
-    const updated = await updateUserStatus(telegramId, 'active', ADMIN_ID);
-    
-    if (updated) {
-      console.log(`✅ Пользователь ${telegramId} активирован как ${mainAppRole}`);
-      
-      // Автоматически создаем профиль преподавателя если это учитель
-      if (mainAppRole === 'teacher') {
-        await createTeacherProfile(telegramId, fullName);
-      }
-      
-      return { 
-        ok: true, 
-        message: 'Пользователь зарегистрирован и активирован',
-        role: mainAppRole 
-      };
-    } else {
-      throw new Error('Не удалось обновить статус пользователя');
-    }
-    
-  } catch (error) {
-    console.error('❌ Ошибка регистрации в основном приложении:', error);
-    return { ok: false, error: error.message };
-  }
-}
-
-// Создать профиль преподавателя (предметы и т.д.)
-async function createTeacherProfile(telegramId, fullName) {
-  try {
-    // Получаем пользователя чтобы узнать его ID
-    const user = await getUser(telegramId);
-    if (!user) return;
-    
-    // Создаем профиль преподавателя
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/teacher_profiles`,
-      {
-        method: 'POST',
-        headers: {
-          ...createHeaders(true),
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          teacher_id: user.id,
-          gender: 'Мужской'
-        })
-      }
-    );
-    
-    // Добавляем базовые предметы
-    const basicSubjects = ['МатематикаЕГЭ', 'ФизикаОГЭ'];
-    const subjectData = basicSubjects.map(subject => ({
-      teacher_id: user.id,
-      subject: subject
-    }));
-    
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/teacher_subjects`,
-      {
-        method: 'POST',
-        headers: createHeaders(true),
-        body: JSON.stringify(subjectData)
-      }
-    );
-    
-    console.log(`📚 Создан профиль преподавателя для ${fullName}`);
-    
-  } catch (error) {
-    console.error('Ошибка создания профиля преподавателя:', error);
   }
 }
 
@@ -301,27 +279,32 @@ bot.onText(/\/start/, async (msg) => {
   
   if (existingUser) {
     if (existingUser.status === 'active') {
-      const roleText = existingUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+      const userTypeText = existingUser.user_type === 'teacher' ? 'учитель' : 
+                          existingUser.user_type === 'manager' ? 'менеджер' : 
+                          existingUser.user_type;
       
-      // Создаем URL с tg_id для открытия приложения
-      const webAppUrl = `${MAIN_APP_URL}/?tg_id=${userId}`;
+      // СОЗДАЕМ ИНДИВИДУАЛЬНУЮ ССЫЛКУ ДЛЯ ЭТОГО УЧИТЕЛЯ
+      const individualAppUrl = `${MAIN_APP_URL}/?tg_id=${userId}`;
       
       await bot.sendMessage(chatId, 
-        `✅ Вы уже зарегистрированы как ${roleText}!\n\n` +
+        `✅ Вы уже зарегистрированы как ${userTypeText}!\n\n` +
         `👤 Имя: ${existingUser.first_name}\n` +
-        `🎯 Роль: ${roleText}\n\n` +
-        `Нажмите кнопку ниже, чтобы открыть приложение:`,
+        `🎯 Роль: ${userTypeText}\n` +
+        `📊 Статус: Активен\n\n` +
+        `Нажмите кнопку ниже, чтобы открыть ВАШЕ персональное приложение:`,
         {
           reply_markup: {
             inline_keyboard: [[
               {
-                text: '📱 Открыть приложение',
-                web_app: { url: webAppUrl }
+                text: '📱 Открыть МОЕ приложение',
+                web_app: { url: individualAppUrl }
               }
             ]]
           }
         }
       );
+      
+      console.log(`🔗 Отправлена индивидуальная ссылка для ${userId}: ${individualAppUrl}`);
       return;
     }
     
@@ -331,13 +314,20 @@ bot.onText(/\/start/, async (msg) => {
       );
       return;
     }
+    
+    if (existingUser.status === 'blocked') {
+      await bot.sendMessage(chatId, 
+        '❌ Ваш аккаунт заблокирован. Свяжитесь с администратором.'
+      );
+      return;
+    }
   }
   
   // Новый пользователь - начинаем регистрацию
   await setUserState(userId, 'choosing_role');
   
   await bot.sendMessage(chatId,
-    '👋 Добро пожаловать в систему расписания!\n\n' +
+    '👋 Добро пожаловать в систему расписания преподавателей!\n\n' +
     'Пожалуйста, выберите свою роль:',
     {
       reply_markup: {
@@ -362,15 +352,17 @@ bot.on('callback_query', async (query) => {
     // Выбор роли
     if (data.startsWith('role_')) {
       const role = data.replace('role_', '');
-      const roleType = role === 'teacher' ? 'pending_teacher' : 'pending_manager';
       
-      await setUserState(userId, 'entering_name', JSON.stringify({ role: roleType }));
+      await setUserState(userId, 'entering_name', { role: role });
       await bot.deleteMessage(chatId, query.message.message_id);
       
+      const roleText = role === 'teacher' ? 'учитель' : 'менеджер';
+      
       await bot.sendMessage(chatId,
-        role === 'teacher' ? 
-        '👨‍🏫 Отлично! Теперь введите ваше ФИО (полное имя):' :
-        '👨‍💼 Отлично! Теперь введите ваше ФИО (полное имя):'
+        `${role === 'teacher' ? '👨‍🏫' : '👨‍💼'} Отлично! Вы выбрали роль "${roleText}".\n\n` +
+        `Теперь введите ваше ФИО (полное имя и фамилия):\n\n` +
+        `Пример: <code>Иванов Иван Иванович</code>`,
+        { parse_mode: 'HTML' }
       );
       
       await bot.answerCallbackQuery(query.id);
@@ -392,7 +384,7 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-// Обработка текстовых сообщений (ВВОД ИМЕНИ)
+// Обработка текстовых сообщений (ВВОД ИМЕНИ УЧИТЕЛЯ)
 bot.on('message', async (msg) => {
   if (!msg.text || msg.text.startsWith('/')) return;
   
@@ -403,23 +395,26 @@ bot.on('message', async (msg) => {
   const userState = await getUserState(userId);
   
   if (userState && userState.state === 'entering_name') {
-    if (text.length < 2) {
-      await bot.sendMessage(chatId, '❌ Пожалуйста, введите корректное ФИО (минимум 2 символа)');
+    if (text.length < 3) {
+      await bot.sendMessage(chatId, '❌ Пожалуйста, введите корректное ФИО (минимум 3 символа)');
       return;
     }
     
     try {
-      const tempData = JSON.parse(userState.temp_data || '{}');
-      const role = tempData.role;
+      const stepData = userState.step_data || {};
+      const role = stepData.role || 'teacher';
       
-      // СОЗДАЕМ ПОЛЬЗОВАТЕЛЯ В SUPABASE!
-      await createUser({
+      // СОЗДАЕМ УЧИТЕЛЯ В БАЗЕ ДАННЫХ
+      const newUser = await createUser({
         telegram_id: userId,
         telegram_username: msg.from.username || null,
         full_name: text,
-        role: role,
-        status: 'pending'
+        role: role
       });
+      
+      if (!newUser) {
+        throw new Error('Не удалось создать пользователя');
+      }
       
       // Отправляем заявку админу
       await sendAdminNotification(userId, text, role);
@@ -428,29 +423,35 @@ bot.on('message', async (msg) => {
       await deleteUserState(userId);
       
       // Уведомляем пользователя
-      const roleText = role.includes('teacher') ? 'учителя' : 'менеджера';
+      const roleText = role === 'teacher' ? 'учителя' : 'менеджера';
+      
       await bot.sendMessage(chatId,
-        `✅ Ваша заявка на регистрацию в качестве ${roleText} отправлена!\n\n` +
-        `👤 Ваше имя: ${text}\n` +
-        `🕐 Статус: Ожидание одобрения администратором\n\n` +
-        `Вы получите уведомление, когда администратор рассмотрит вашу заявку.`
+        `✅ *Ваша заявка отправлена!*\n\n` +
+        `👤 *Ваше имя:* ${text}\n` +
+        `🎯 *Роль:* ${roleText}\n` +
+        `🕐 *Статус:* Ожидание одобрения\n\n` +
+        `Администратор получил вашу заявку и скоро рассмотрит её.\n` +
+        `После одобрения вы получите ссылку на ваше персональное приложение.`,
+        { parse_mode: 'Markdown' }
       );
       
       console.log(`📝 Новая заявка от ${userId} (${text}) как ${roleText}`);
       
     } catch (error) {
       console.error('❌ Ошибка регистрации:', error);
-      await bot.sendMessage(chatId, '❌ Произошла ошибка при обработке заявки. Попробуйте позже.');
+      await bot.sendMessage(chatId, 
+        '❌ Произошла ошибка при обработке заявки. Попробуйте позже или свяжитесь с администратором.'
+      );
     }
   }
 });
 
-// Отправка уведомления админу
+// Отправка уведомления админу о новой заявке
 async function sendAdminNotification(userId, fullName, role) {
   try {
     const user = await getUser(userId);
     const username = user?.username || 'не указан';
-    const roleText = role.includes('teacher') ? 'учителя' : 'менеджера';
+    const roleText = role === 'teacher' ? 'учителя' : 'менеджера';
     
     const message = `
 📋 *НОВАЯ ЗАЯВКА НА РЕГИСТРАЦИЮ*
@@ -460,6 +461,12 @@ async function sendAdminNotification(userId, fullName, role) {
 📝 *Username:* @${username}
 👨‍🏫 *Роль:* ${roleText}
 🕐 *Время:* ${new Date().toLocaleString('ru-RU')}
+
+*После одобрения пользователь получит:*
+• 📱 Ссылку на индивидуальное приложение
+• 📅 Доступ к своему расписанию
+• 📚 Возможность настраивать предметы
+• 👥 Управление заявками учеников
 
 _Рассмотреть заявку:_
     `;
@@ -483,7 +490,7 @@ _Рассмотреть заявку:_
   }
 }
 
-// Обработка действий админа
+// Обработка действий админа (ОДОБРЕНИЕ/ОТКЛОНЕНИЕ)
 async function handleAdminAction(adminId, targetUserId, isApproved, query) {
   try {
     // Проверяем права
@@ -506,17 +513,18 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
     }
     
     // Обновляем сообщение у админа
-    const roleText = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+    const roleText = targetUser.user_type === 'teacher' ? 'учитель' : 'менеджер';
     const statusText = isApproved ? 'одобрен' : 'отклонен';
     const emoji = isApproved ? '✅' : '❌';
     
     await bot.editMessageText(
       `${emoji} *Заявка обработана*\n\n` +
-      `👤 ${targetUser.first_name}\n` +
-      `🆔 ${targetUserId}\n` +
-      `👨‍🏫 ${roleText}\n` +
-      `📊 Статус: ${statusText}\n` +
-      `⏱️ ${new Date().toLocaleString('ru-RU')}`,
+      `👤 *Имя:* ${targetUser.first_name}\n` +
+      `🆔 *ID:* ${targetUserId}\n` +
+      `👨‍🏫 *Роль:* ${roleText}\n` +
+      `📊 *Статус:* ${statusText}\n` +
+      `⏱️ *Время:* ${new Date().toLocaleString('ru-RU')}\n\n` +
+      `${isApproved ? `🔗 *Ссылка для пользователя:* ${MAIN_APP_URL}/?tg_id=${targetUserId}` : ''}`,
       {
         chat_id: query.message.chat.id,
         message_id: query.message.message_id,
@@ -527,37 +535,47 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
     // Уведомляем пользователя
     try {
       if (isApproved) {
-        const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+        const userTypeText = targetUser.user_type === 'teacher' ? 'учитель' : 'менеджер';
         
-        // Регистрируем пользователя в основной системе
-        await registerUserInMainApp(targetUserId, targetUser.first_name, targetUser.role);
+        // Если учитель - создаем для него профиль и предметы
+        if (targetUser.user_type === 'teacher') {
+          await createTeacherProfile(targetUser.id, targetUser.first_name);
+        }
         
-        // Создаем URL с tg_id для открытия приложения
-        const webAppUrl = `${MAIN_APP_URL}/?tg_id=${targetUserId}`;
+        // СОЗДАЕМ ИНДИВИДУАЛЬНУЮ ССЫЛКУ ДЛЯ ЭТОГО ПОЛЬЗОВАТЕЛЯ
+        const individualAppUrl = `${MAIN_APP_URL}/?tg_id=${targetUserId}`;
         
         await bot.sendMessage(targetUserId,
-          `🎉 *Ваша заявка одобрена!*\n\n` +
-          `Теперь вы зарегистрированы как ${roleForUser}.\n\n` +
+          `🎉 *Поздравляем! Ваша заявка одобрена!*\n\n` +
+          `Теперь вы зарегистрированы как ${userTypeText}.\n\n` +
+          `📱 *Ваше персональное приложение:*\n` +
+          `${individualAppUrl}\n\n` +
           `Нажмите кнопку ниже, чтобы открыть приложение:`,
           {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [[
                 {
-                  text: '📱 Открыть приложение',
-                  web_app: { url: webAppUrl }
+                  text: '📱 Открыть МОЕ приложение',
+                  web_app: { url: individualAppUrl }
                 }
               ]]
             }
           }
         );
         
-        console.log(`✅ Пользователь ${targetUserId} одобрен как ${roleForUser}`);
+        console.log(`✅ Пользователь ${targetUserId} одобрен как ${userTypeText}`);
+        console.log(`🔗 Индивидуальная ссылка: ${individualAppUrl}`);
+        
       } else {
         await bot.sendMessage(targetUserId,
           `❌ *Ваша заявка отклонена*\n\n` +
-          `К сожалению, администратор отклонил вашу заявку.\n` +
-          `Если это ошибка, свяжитесь с администратором.`
+          `К сожалению, администратор отклонил вашу заявку на регистрацию.\n\n` +
+          `*Возможные причины:*\n` +
+          `• Неполная информация\n` +
+          `• Ошибка в данных\n` +
+          `• Другая причина\n\n` +
+          `Если вы считаете это ошибкой, свяжитесь с администратором.`
         );
         
         console.log(`❌ Заявка пользователя ${targetUserId} отклонена`);
@@ -574,7 +592,7 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
   }
 }
 
-// Команда /admin для просмотра статистики
+// Команда /admin для админки
 bot.onText(/\/admin/, async (msg) => {
   if (msg.from.id.toString() !== ADMIN_ID) {
     await bot.sendMessage(msg.chat.id, '⛔ У вас нет прав доступа');
@@ -582,32 +600,40 @@ bot.onText(/\/admin/, async (msg) => {
   }
   
   try {
-    // Получаем статистику из Supabase
-    const statsResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?select=status,role`,
+    // Получаем статистику
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?select=user_type,status`,
       { headers: createHeaders() }
     );
     
-    let pending = 0;
-    let activeTeachers = 0;
-    let activeManagers = 0;
+    let stats = {
+      pending: 0,
+      activeTeachers: 0,
+      activeManagers: 0,
+      blocked: 0,
+      total: 0
+    };
     
-    if (statsResponse.ok) {
-      const allUsers = await statsResponse.json();
+    if (response.ok) {
+      const allUsers = await response.json();
+      stats.total = allUsers.length;
       
       allUsers.forEach(user => {
-        if (user.status === 'pending') pending++;
+        if (user.status === 'pending') stats.pending++;
         if (user.status === 'active') {
-          if (user.role === 'teacher') activeTeachers++;
-          if (user.role === 'manager') activeManagers++;
+          if (user.user_type === 'teacher') stats.activeTeachers++;
+          if (user.user_type === 'manager') stats.activeManagers++;
         }
+        if (user.status === 'blocked') stats.blocked++;
       });
     }
     
     let message = `👑 *Панель администратора*\n\n`;
-    message += `⏳ *Ожидают одобрения:* ${pending}\n`;
-    message += `👨‍🏫 *Активных учителей:* ${activeTeachers}\n`;
-    message += `👨‍💼 *Активных менеджеров:* ${activeManagers}\n\n`;
+    message += `👥 *Всего пользователей:* ${stats.total}\n`;
+    message += `⏳ *Ожидают одобрения:* ${stats.pending}\n`;
+    message += `👨‍🏫 *Активных учителей:* ${stats.activeTeachers}\n`;
+    message += `👨‍💼 *Активных менеджеров:* ${stats.activeManagers}\n`;
+    message += `🚫 *Заблокировано:* ${stats.blocked}\n\n`;
     
     // Список ожидающих
     const pendingUsers = await getPendingUsers();
@@ -615,8 +641,8 @@ bot.onText(/\/admin/, async (msg) => {
     if (pendingUsers.length > 0) {
       message += `*Последние заявки:*\n`;
       pendingUsers.forEach((user, index) => {
-        const role = user.role === 'pending_teacher' ? '👨‍🏫 Учитель' : '👨‍💼 Менеджер';
-        message += `${index + 1}. ${user.first_name} - ${role}\n`;
+        const role = user.user_type === 'teacher' ? '👨‍🏫 Учитель' : '👨‍💼 Менеджер';
+        message += `${index + 1}. ${user.first_name} - ${role} (ID: ${user.telegram_id})\n`;
       });
     } else {
       message += `✅ Нет ожидающих заявок`;
@@ -643,33 +669,72 @@ bot.onText(/\/myinfo/, async (msg) => {
   const statusMap = {
     'pending': '⏳ Ожидание одобрения',
     'active': '✅ Активен',
-    'rejected': '❌ Отклонен'
+    'blocked': '❌ Заблокирован',
+    'inactive': '💤 Неактивен'
   };
   
   const roleMap = {
-    'pending_teacher': '👨‍🏫 Учитель (ожидание)',
-    'pending_manager': '👨‍💼 Менеджер (ожидание)',
     'teacher': '👨‍🏫 Учитель',
-    'manager': '👨‍💼 Менеджер'
+    'manager': '👨‍💼 Менеджер',
+    'admin': '👑 Администратор',
+    'student': '👨‍🎓 Ученик'
   };
   
   const message = `
 📋 *Ваши данные:*
 
 👤 *Имя:* ${user.first_name}
-🆔 *ID:* ${userId}
+🆔 *Telegram ID:* ${userId}
 📝 *Username:* ${user.username || 'не указан'}
-${roleMap[user.role] || user.role}
+${roleMap[user.user_type] || user.user_type}
 📊 *Статус:* ${statusMap[user.status] || user.status}
 📅 *Зарегистрирован:* ${new Date(user.created_at).toLocaleDateString('ru-RU')}
+${user.status === 'active' ? `\n🔗 *Ваше приложение:* ${MAIN_APP_URL}/?tg_id=${userId}` : ''}
   `;
   
   await bot.sendMessage(msg.chat.id, message, { parse_mode: 'Markdown' });
 });
 
+// Команда /link (получить ссылку на приложение)
+bot.onText(/\/link/, async (msg) => {
+  const userId = msg.from.id.toString();
+  const user = await getUser(userId);
+  
+  if (!user) {
+    await bot.sendMessage(msg.chat.id, 'Вы еще не зарегистрированы. Используйте /start');
+    return;
+  }
+  
+  if (user.status !== 'active') {
+    await bot.sendMessage(msg.chat.id, 
+      `Ваш аккаунт не активен (статус: ${user.status}). Дождитесь одобрения администратора.`
+    );
+    return;
+  }
+  
+  // СОЗДАЕМ ИНДИВИДУАЛЬНУЮ ССЫЛКУ
+  const individualAppUrl = `${MAIN_APP_URL}/?tg_id=${userId}`;
+  
+  await bot.sendMessage(msg.chat.id,
+    `🔗 *Ваша персональная ссылка:*\n\n` +
+    `${individualAppUrl}\n\n` +
+    `Нажмите кнопку ниже, чтобы открыть приложение:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          {
+            text: '📱 Открыть МОЕ приложение',
+            web_app: { url: individualAppUrl }
+          }
+        ]]
+      }
+    }
+  );
+});
+
 // ==================== API ДЛЯ ВЕБ-ПРИЛОЖЕНИЯ ====================
 
-// API для проверки пользователя
 app.get('/api/user/:telegramId', async (req, res) => {
   try {
     const user = await getUser(req.params.telegramId);
@@ -683,47 +748,15 @@ app.get('/api/user/:telegramId', async (req, res) => {
     
     res.json({
       exists: true,
-      id: user.telegram_id,
-      name: user.first_name,
-      role: user.role.replace('pending_', ''),
+      telegramId: user.telegram_id,
+      firstName: user.first_name,
+      userType: user.user_type,
       status: user.status,
       isActive: user.status === 'active',
-      isTeacher: user.role === 'teacher' || user.role === 'pending_teacher',
-      isManager: user.role === 'manager' || user.role === 'pending_manager',
-      dbId: user.id
+      isTeacher: user.user_type === 'teacher',
+      isManager: user.user_type === 'manager',
+      createdAt: user.created_at
     });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// API для регистрации (если нужно из внешних систем)
-app.post('/api/register', async (req, res) => {
-  try {
-    const { telegram_id, full_name, role } = req.body;
-    
-    if (!telegram_id || !full_name) {
-      return res.status(400).json({ error: 'telegram_id и full_name обязательны' });
-    }
-    
-    const user = await createUser({
-      telegram_id: telegram_id,
-      telegram_username: req.body.username || null,
-      full_name: full_name,
-      role: role || 'pending_teacher',
-      status: 'pending'
-    });
-    
-    if (user) {
-      res.json({ 
-        success: true, 
-        message: 'Пользователь зарегистрирован',
-        userId: user.id 
-      });
-    } else {
-      res.status(500).json({ error: 'Не удалось создать пользователя' });
-    }
-    
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -788,6 +821,13 @@ app.get('/', (req, res) => {
             border-radius: 5px;
             margin: 10px 0;
           }
+          .teacher-example {
+            background: #9C27B0;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+          }
         </style>
       </head>
       <body>
@@ -799,6 +839,10 @@ app.get('/', (req, res) => {
             <strong>📦 База данных:</strong> Supabase PostgreSQL
           </div>
           
+          <div class="teacher-example">
+            <strong>🎯 Индивидуальные приложения:</strong> Каждый учитель получает свою ссылку
+          </div>
+          
           <div class="info">
             <p><strong>👑 Админ ID:</strong> ${ADMIN_ID}</p>
             <p><strong>📱 Основное приложение:</strong> <a href="${MAIN_APP_URL}" target="_blank">${MAIN_APP_URL}</a></p>
@@ -807,23 +851,26 @@ app.get('/', (req, res) => {
             <p><strong>📅 Время сервера:</strong> ${new Date().toLocaleString('ru-RU')}</p>
           </div>
           
-          <h3>Как использовать:</h3>
+          <h3>Как работает система:</h3>
           <ol>
-            <li>Откройте Telegram и найдите бота</li>
-            <li>Отправьте команду <code>/start</code></li>
-            <li>Выберите роль (учитель/менеджер)</li>
-            <li>Введите ФИО</li>
-            <li>Админ получит заявку на одобрение</li>
-            <li>После одобрения откроется приложение: ${MAIN_APP_URL}/?tg_id=ВАШ_ID</li>
+            <li>Учитель пишет <code>/start</code> в боте</li>
+            <li>Выбирает роль "Учитель" и вводит ФИО</li>
+            <li>Админ получает заявку и одобряет её</li>
+            <li>Учитель получает <strong>индивидуальную ссылку</strong></li>
+            <li>По этой ссылке открывается его персональное приложение</li>
           </ol>
           
-          <h3>Важно:</h3>
-          <p>Все данные сохраняются в общей базе Supabase. После одобрения:</p>
+          <h3>Что есть в индивидуальном приложении:</h3>
           <ul>
-            <li>Учителя получают доступ к расписанию и предметам</li>
-            <li>Данные доступны в основном приложении</li>
-            <li>Каждый пользователь имеет свои данные</li>
+            <li>📅 Собственное расписание (только его)</li>
+            <li>📚 Его предметы (настраивает сам)</li>
+            <li>👥 Его ученики и заявки</li>
+            <li>📊 Его статистика</li>
+            <li>⚙️ Его настройки</li>
           </ul>
+          
+          <p><strong>Пример индивидуальной ссылки учителя:</strong></p>
+          <code>${MAIN_APP_URL}/?tg_id=987654321</code>
         </div>
       </body>
     </html>
@@ -842,9 +889,7 @@ app.post('/webhook', (req, res) => {
 app.listen(PORT, async () => {
   console.log(`🌐 Сервер бота запущен на порту ${PORT}`);
   console.log(`📊 Статусная страница: http://localhost:${PORT}`);
-  
-  // Создаем таблицы если их нет
-  await createTablesIfNotExist();
+  console.log(`👨‍🏫 Пример индивидуальной ссылки: ${MAIN_APP_URL}/?tg_id=987654321`);
   
   // Настройка вебхука для продакшена
   if (NODE_ENV === 'production') {
@@ -855,44 +900,17 @@ app.listen(PORT, async () => {
       await bot.setWebHook(webhookUrl);
       console.log('✅ Webhook установлен');
       
-      // Удаляем polling если он был
       bot.stopPolling();
     } catch (error) {
       console.error('❌ Ошибка установки webhook:', error.message);
       console.log('⚠️  Запускаем polling режим');
-      
-      // Fallback на polling
       bot.startPolling();
     }
   } else {
-    // В разработке используем polling
     console.log('🔁 Запускаем в режиме polling');
     bot.startPolling();
   }
 });
-
-// Создание таблиц в Supabase если их нет
-async function createTablesIfNotExist() {
-  try {
-    console.log('🔧 Проверяем наличие таблиц в Supabase...');
-    
-    // Проверяем таблицу users
-    const usersCheck = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?limit=1`,
-      { headers: createHeaders() }
-    );
-    
-    if (!usersCheck.ok && usersCheck.status === 404) {
-      console.log('📝 Создаем таблицы через SQL Editor в Supabase Dashboard');
-      console.log('💡 Выполните SQL из README.md в SQL Editor Supabase');
-    } else {
-      console.log('✅ Таблица users существует');
-    }
-    
-  } catch (error) {
-    console.error('❌ Ошибка проверки таблиц:', error.message);
-  }
-}
 
 // Обработка ошибок
 bot.on('polling_error', (error) => {
