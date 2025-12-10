@@ -176,7 +176,7 @@ bot.onText(/\/start/, async (msg) => {
     if (existingUser) {
         if (existingUser.status === 'active') {
             const roleText = existingUser.role.includes('teacher') ? 'учитель' : 'менеджер';
-            const webAppUrl = 'https://school-mini-app.vercel.app'; // ЗАМЕНИТЕ на ваш URL
+            const webAppUrl = 'https://school-mini-app-pi.vercel.app/'; // ЗАМЕНИТЕ на ваш URL
             
             await bot.sendMessage(chatId, 
                 `✅ Вы уже зарегистрированы как ${roleText}!\n\n` +
