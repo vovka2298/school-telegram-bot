@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: school-telegram-bot
+    env: node
+    buildCommand: npm install
+    startCommand: node bot.js
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        value: 913096324
+      - key: NODE_ENV
+        value: production
+    plan: free
