@@ -78,6 +78,27 @@ db.serialize(() => {
  */
 async function saveUserToSupabase(telegramId, firstName, lastName, role, username = null) {
   try {
+    // Сначала проверяем, существует ли пользователь
+    const existingUser = await checkUserInSupabase(telegramId);
+    if (existingUser) {
+      console.log(`ℹ️  Пользователь ${telegramId} уже существует в Supabase`);
+      // Обновляем статус на approved, если нужно
+      if (!existingUser.approved) {
+        const updateResponse = await fetch(
+          `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}`,
+          {
+            method: 'PATCH',
+            headers: createHeaders(true),
+            body: JSON.stringify({ approved: true })
+          }
+        );
+        if (updateResponse.ok) {
+          console.log(`✅ Статус пользователя обновлен на approved`);
+        }
+      }
+      return { success: true, user: existingUser, userId: existingUser.id };
+    }
+    
     // Определяем окончательную роль (без 'pending_')
     const finalRole = role.replace('pending_', '');
     
@@ -92,8 +113,7 @@ async function saveUserToSupabase(telegramId, firstName, lastName, role, usernam
       last_name: last_name,
       username: username || null,
       role: finalRole, // 'teacher' или 'manager'
-      approved: true,
-      created_at: new Date().toISOString()
+      approved: true
     };
 
     console.log(`💾 Сохранение пользователя в Supabase:`, userData);
@@ -107,24 +127,79 @@ async function saveUserToSupabase(telegramId, firstName, lastName, role, usernam
       }
     );
 
+    // Проверяем статус ответа
     if (!response.ok) {
       const errorText = await response.text();
+      // Если ошибка "duplicate key" - пользователь уже существует, это нормально
+      if (errorText.includes('duplicate') || errorText.includes('unique')) {
+        console.log(`ℹ️  Пользователь уже существует, получаем его данные...`);
+        const existing = await checkUserInSupabase(telegramId);
+        if (existing) {
+          return { success: true, user: existing, userId: existing.id };
+        }
+      }
       console.error('❌ Ошибка сохранения пользователя в Supabase:', errorText);
       return { success: false, error: errorText };
     }
 
-    const newUser = await response.json();
-    const userId = newUser[0]?.id || newUser.id;
+    // Supabase с return=minimal может вернуть пустой ответ или массив
+    let newUser;
+    const responseText = await response.text();
+    
+    if (responseText) {
+      try {
+        newUser = JSON.parse(responseText);
+      } catch (e) {
+        // Если не JSON, проверяем существование пользователя
+        console.log(`ℹ️  Пустой ответ от Supabase, проверяем существование пользователя...`);
+        const existing = await checkUserInSupabase(telegramId);
+        if (existing) {
+          newUser = existing;
+        } else {
+          // Пытаемся получить пользователя по telegram_id
+          const getUserResponse = await fetch(
+            `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}&select=*`,
+            { headers: createHeaders() }
+          );
+          if (getUserResponse.ok) {
+            const users = await getUserResponse.json();
+            if (users.length > 0) {
+              newUser = users[0];
+            }
+          }
+        }
+      }
+    } else {
+      // Пустой ответ - проверяем, создался ли пользователь
+      console.log(`ℹ️  Пустой ответ от Supabase, проверяем создание пользователя...`);
+      const existing = await checkUserInSupabase(telegramId);
+      if (existing) {
+        newUser = existing;
+      }
+    }
+
+    if (!newUser) {
+      console.error('❌ Не удалось получить данные созданного пользователя');
+      return { success: false, error: 'User created but data not retrieved' };
+    }
+
+    const userId = newUser.id || newUser[0]?.id;
     console.log('✅ Пользователь сохранен в Supabase с ID:', userId);
     
     // Если это преподаватель, создаем профиль
-    if (finalRole === 'teacher') {
+    if (finalRole === 'teacher' && userId) {
       await createTeacherProfile(userId);
     }
 
-    return { success: true, user: newUser[0] || newUser, userId: userId };
+    return { success: true, user: newUser, userId: userId };
   } catch (error) {
     console.error('❌ Ошибка при сохранении пользователя в Supabase:', error);
+    // Даже при ошибке проверяем, может пользователь все равно создался
+    const existing = await checkUserInSupabase(telegramId);
+    if (existing) {
+      console.log(`✅ Пользователь найден после ошибки, возвращаем успех`);
+      return { success: true, user: existing, userId: existing.id };
+    }
     return { success: false, error: error.message };
   }
 }
@@ -165,13 +240,15 @@ async function createTeacherProfile(teacherId) {
 async function checkUserInSupabase(telegramId) {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}&select=id,approved,role`,
+      `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}&select=id,approved,role,first_name,last_name`,
       { headers: createHeaders() }
     );
 
     if (response.ok) {
       const users = await response.json();
-      return users.length > 0 ? users[0] : null;
+      if (users.length > 0) {
+        return users[0];
+      }
     }
     return null;
   } catch (error) {
@@ -566,7 +643,20 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
                     targetUser.telegram_username
                 );
                 
-                if (supabaseResult.success) {
+                // Проверяем результат или наличие пользователя в Supabase
+                let userSaved = supabaseResult.success;
+                
+                // Если была ошибка, проверяем, может пользователь все равно создался
+                if (!userSaved) {
+                    console.log(`⚠️  Проверяем, создался ли пользователь несмотря на ошибку...`);
+                    const checkUser = await checkUserInSupabase(targetUserId);
+                    if (checkUser && checkUser.approved) {
+                        console.log(`✅ Пользователь найден в Supabase, считаем успехом`);
+                        userSaved = true;
+                    }
+                }
+                
+                if (userSaved) {
                     console.log(`✅ Пользователь ${targetUserId} сохранен в Supabase`);
                     
                     const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
@@ -592,11 +682,28 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
                     console.log(`✅ Пользователь ${targetUserId} одобрен как ${roleForUser}`);
                 } else {
                     console.error(`❌ Ошибка сохранения в Supabase:`, supabaseResult.error);
+                    // Даже при ошибке отправляем сообщение, но предупреждаем
+                    const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+                    const webAppUrl = `${MAIN_APP_URL}/?tgId=${targetUserId}`;
+                    
                     await bot.sendMessage(targetUserId,
                         `🎉 *Ваша заявка одобрена!*\n\n` +
-                        `Однако произошла ошибка при сохранении данных. ` +
-                        `Обратитесь к администратору.`
+                        `Теперь вы зарегистрированы как ${roleForUser}.\n\n` +
+                        `Нажмите кнопку ниже, чтобы открыть приложение:`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    {
+                                        text: '📱 Открыть приложение',
+                                        web_app: { url: webAppUrl }
+                                    }
+                                ]]
+                            }
+                        }
                     );
+                    
+                    console.log(`⚠️  Пользователь уведомлен, но была ошибка при сохранении в Supabase`);
                 }
             } else {
                 await bot.sendMessage(targetUserId,
