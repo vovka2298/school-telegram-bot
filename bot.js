@@ -2,6 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fetch = require('node-fetch');
 require('dotenv').config();
 
 // ==================== КОНФИГУРАЦИЯ ====================
@@ -11,24 +12,38 @@ const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
 // URL вашего основного приложения на Vercel
-const MAIN_APP_URL = 'https://school-mini-app-pi.vercel.app';
+const MAIN_APP_URL = process.env.MAIN_APP_URL || 'https://school-mini-app1.vercel.app';
+
+// Конфигурация Supabase (те же данные, что в server.js)
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://rtywenfvaoxsjdkulmdk.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_WhiVd5day72hRoTKiFtiIQ_sP2wu4_S';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ0eXdlbmZ2YW94c2pka3VsbWRrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM3NzEzNiwiZXhwIjoyMDgwOTUzMTM2fQ.wy2D8H0mS-c1JqJFF2O-IPk3bgvVLMjHJUTzRX2fx-0';
+
+// Заголовки для Supabase
+const createHeaders = (useServiceKey = false) => ({
+  'apikey': SUPABASE_KEY,
+  'Authorization': `Bearer ${useServiceKey ? SUPABASE_SERVICE_KEY : SUPABASE_KEY}`,
+  'Content-Type': 'application/json',
+  'Prefer': 'return=minimal'
+});
 
 console.log('🚀 Запуск Telegram бота...');
 console.log(`👑 Админ ID: ${ADMIN_ID}`);
 console.log(`📱 Основное приложение: ${MAIN_APP_URL}`);
 console.log(`🌐 Режим: ${NODE_ENV}`);
+console.log(`🗄️  Supabase: ${SUPABASE_URL}`);
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
 const bot = new TelegramBot(BOT_TOKEN);
 const app = express();
 app.use(express.json());
 
-// База данных SQLite (для бота)
+// База данных SQLite (для бота - хранение заявок)
 const db = new sqlite3.Database(path.join(__dirname, 'school.db'));
 
 // Создаем таблицы при первом запуске
 db.serialize(() => {
-    // Таблица пользователей
+    // Таблица пользователей (для заявок)
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +70,115 @@ db.serialize(() => {
     
     console.log('✅ База данных инициализирована');
 });
+
+// ==================== ФУНКЦИИ ДЛЯ SUPABASE ====================
+
+/**
+ * Сохранить пользователя в Supabase после одобрения
+ */
+async function saveUserToSupabase(telegramId, firstName, lastName, role, username = null) {
+  try {
+    // Определяем окончательную роль (без 'pending_')
+    const finalRole = role.replace('pending_', '');
+    
+    // Разделяем ФИО на имя и фамилию
+    const nameParts = firstName.trim().split(/\s+/);
+    const first_name = nameParts[0] || firstName;
+    const last_name = nameParts.slice(1).join(' ') || lastName || null;
+    
+    const userData = {
+      telegram_id: telegramId.toString(),
+      first_name: first_name,
+      last_name: last_name,
+      username: username || null,
+      role: finalRole, // 'teacher' или 'manager'
+      approved: true,
+      created_at: new Date().toISOString()
+    };
+
+    console.log(`💾 Сохранение пользователя в Supabase:`, userData);
+
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users`,
+      {
+        method: 'POST',
+        headers: createHeaders(true), // Используем service key для записи
+        body: JSON.stringify(userData)
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Ошибка сохранения пользователя в Supabase:', errorText);
+      return { success: false, error: errorText };
+    }
+
+    const newUser = await response.json();
+    const userId = newUser[0]?.id || newUser.id;
+    console.log('✅ Пользователь сохранен в Supabase с ID:', userId);
+    
+    // Если это преподаватель, создаем профиль
+    if (finalRole === 'teacher') {
+      await createTeacherProfile(userId);
+    }
+
+    return { success: true, user: newUser[0] || newUser, userId: userId };
+  } catch (error) {
+    console.error('❌ Ошибка при сохранении пользователя в Supabase:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Создать профиль преподавателя в Supabase
+ */
+async function createTeacherProfile(teacherId) {
+  try {
+    const profileData = {
+      teacher_id: teacherId,
+      gender: 'Мужской' // По умолчанию, можно изменить позже
+    };
+
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/teacher_profiles`,
+      {
+        method: 'POST',
+        headers: createHeaders(true),
+        body: JSON.stringify(profileData)
+      }
+    );
+
+    if (response.ok) {
+      console.log('✅ Профиль преподавателя создан в Supabase');
+    } else {
+      const errorText = await response.text();
+      console.error('⚠️  Ошибка создания профиля (может уже существовать):', errorText);
+    }
+  } catch (error) {
+    console.error('❌ Ошибка создания профиля:', error);
+  }
+}
+
+/**
+ * Проверить, существует ли пользователь в Supabase
+ */
+async function checkUserInSupabase(telegramId) {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}&select=id,approved,role`,
+      { headers: createHeaders() }
+    );
+
+    if (response.ok) {
+      const users = await response.json();
+      return users.length > 0 ? users[0] : null;
+    }
+    return null;
+  } catch (error) {
+    console.error('❌ Ошибка проверки пользователя в Supabase:', error);
+    return null;
+  }
+}
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
@@ -164,35 +288,6 @@ function getPendingUsers() {
     });
 }
 
-// Функция для регистрации пользователя в основном приложении
-async function registerUserInMainApp(telegramId, fullName, role) {
-    try {
-        // Определяем окончательную роль (без 'pending_')
-        const finalRole = role.replace('pending_', '');
-        
-        const response = await fetch(`${MAIN_APP_URL}/api/register-user`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                telegram_id: telegramId,
-                full_name: fullName,
-                role: finalRole
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        
-        const result = await response.json();
-        console.log(`✅ Пользователь ${telegramId} зарегистрирован в основном приложении`);
-        return result;
-    } catch (error) {
-        console.error(`❌ Ошибка регистрации в основном приложении:`, error);
-        return null;
-    }
-}
-
 // ==================== КОМАНДЫ БОТА ====================
 
 // Команда /start
@@ -203,33 +298,66 @@ bot.onText(/\/start/, async (msg) => {
     
     console.log(`👤 /start от ${userId} (${username})`);
     
-    // Проверяем существующего пользователя
+    // Сначала проверяем в Supabase (основная БД)
+    const supabaseUser = await checkUserInSupabase(userId);
+    
+    if (supabaseUser && supabaseUser.approved) {
+        const roleText = supabaseUser.role === 'teacher' ? 'учитель' : 'менеджер';
+        
+        // Создаем URL с tgId для открытия приложения
+        const webAppUrl = `${MAIN_APP_URL}/?tgId=${userId}`;
+        
+        await bot.sendMessage(chatId, 
+            `✅ Вы уже зарегистрированы как ${roleText}!\n\n` +
+            `Нажмите кнопку ниже, чтобы открыть приложение:`,
+            {
+                reply_markup: {
+                    inline_keyboard: [[
+                        {
+                            text: '📱 Открыть приложение',
+                            web_app: { url: webAppUrl }
+                        }
+                    ]]
+                }
+            }
+        );
+        return;
+    }
+    
+    // Проверяем существующего пользователя в локальной БД
     const existingUser = await getUser(userId);
     
     if (existingUser) {
         if (existingUser.status === 'active') {
-            const roleText = existingUser.role.includes('teacher') ? 'учитель' : 'менеджер';
-            
-            // Создаем URL с tgId для открытия приложения
-            const webAppUrl = `${MAIN_APP_URL}/?tgId=${userId}`;
-            
-            await bot.sendMessage(chatId, 
-                `✅ Вы уже зарегистрированы как ${roleText}!\n\n` +
-                `👤 Имя: ${existingUser.full_name}\n` +
-                `🎯 Роль: ${roleText}\n\n` +
-                `Нажмите кнопку ниже, чтобы открыть приложение:`,
-                {
-                    reply_markup: {
-                        inline_keyboard: [[
-                            {
-                                text: '📱 Открыть приложение',
-                                web_app: { url: webAppUrl }
-                            }
-                        ]]
-                    }
-                }
+            // Пользователь одобрен в боте, но не в Supabase - синхронизируем
+            const supabaseResult = await saveUserToSupabase(
+                userId,
+                existingUser.full_name,
+                '',
+                existingUser.role,
+                existingUser.telegram_username
             );
-            return;
+            
+            if (supabaseResult.success) {
+                const roleText = existingUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+                const webAppUrl = `${MAIN_APP_URL}/?tgId=${userId}`;
+                
+                await bot.sendMessage(chatId, 
+                    `✅ Вы зарегистрированы как ${roleText}!\n\n` +
+                    `Нажмите кнопку ниже, чтобы открыть приложение:`,
+                    {
+                        reply_markup: {
+                            inline_keyboard: [[
+                                {
+                                    text: '📱 Открыть приложение',
+                                    web_app: { url: webAppUrl }
+                                }
+                            ]]
+                        }
+                    }
+                );
+                return;
+            }
         }
         
         if (existingUser.status === 'pending') {
@@ -429,39 +557,47 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
         // Уведомляем пользователя
         try {
             if (isApproved) {
-                const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
-                // Регистрируем пользователя в основном приложении
-                const registrationResult = await registerUserInMainApp(
+                // Сохраняем в Supabase
+                const supabaseResult = await saveUserToSupabase(
                     targetUserId,
                     targetUser.full_name,
-                    targetUser.role
+                    '',
+                    targetUser.role,
+                    targetUser.telegram_username
                 );
                 
-                if (registrationResult) {
-                    console.log(`✅ Пользователь ${targetUserId} зарегистрирован в основном приложении`);
-                }
-                
-                // Создаем URL с tgId для открытия приложения
-                const webAppUrl = `${MAIN_APP_URL}/?tgId=${targetUserId}`;
-                
-                await bot.sendMessage(targetUserId,
-                    `🎉 *Ваша заявка одобрена!*\n\n` +
-                    `Теперь вы зарегистрированы как ${roleForUser}.\n\n` +
-                    `Нажмите кнопку ниже, чтобы открыть приложение:`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [[
-                                {
-                                    text: '📱 Открыть приложение',
-                                    web_app: { url: webAppUrl }
-                                }
-                            ]]
+                if (supabaseResult.success) {
+                    console.log(`✅ Пользователь ${targetUserId} сохранен в Supabase`);
+                    
+                    const roleForUser = targetUser.role.includes('teacher') ? 'учитель' : 'менеджер';
+                    const webAppUrl = `${MAIN_APP_URL}/?tgId=${targetUserId}`;
+                    
+                    await bot.sendMessage(targetUserId,
+                        `🎉 *Ваша заявка одобрена!*\n\n` +
+                        `Теперь вы зарегистрированы как ${roleForUser}.\n\n` +
+                        `Нажмите кнопку ниже, чтобы открыть приложение:`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    {
+                                        text: '📱 Открыть приложение',
+                                        web_app: { url: webAppUrl }
+                                    }
+                                ]]
+                            }
                         }
-                    }
-                );
-                
-                console.log(`✅ Пользователь ${targetUserId} одобрен как ${roleForUser}`);
+                    );
+                    
+                    console.log(`✅ Пользователь ${targetUserId} одобрен как ${roleForUser}`);
+                } else {
+                    console.error(`❌ Ошибка сохранения в Supabase:`, supabaseResult.error);
+                    await bot.sendMessage(targetUserId,
+                        `🎉 *Ваша заявка одобрена!*\n\n` +
+                        `Однако произошла ошибка при сохранении данных. ` +
+                        `Обратитесь к администратору.`
+                    );
+                }
             } else {
                 await bot.sendMessage(targetUserId,
                     `❌ *Ваша заявка отклонена*\n\n` +
@@ -570,7 +706,7 @@ ${roleMap[user.role] || user.role}
 
 // ==================== API ДЛЯ ВЕБ-ПРИЛОЖЕНИЯ ====================
 
-// API для проверки пользователя (ваше веб-приложение будет вызывать этот endpoint)
+// API для проверки пользователя
 app.get('/api/user/:telegramId', async (req, res) => {
     try {
         const user = await getUser(req.params.telegramId);
@@ -637,18 +773,6 @@ app.get('/', (req, res) => {
                     .info p {
                         margin: 10px 0;
                     }
-                    .bot-link {
-                        display: inline-block;
-                        background: #0088cc;
-                        color: white;
-                        padding: 10px 20px;
-                        border-radius: 5px;
-                        text-decoration: none;
-                        margin-top: 20px;
-                    }
-                    .bot-link:hover {
-                        background: #006699;
-                    }
                 </style>
             </head>
             <body>
@@ -659,20 +783,11 @@ app.get('/', (req, res) => {
                     <div class="info">
                         <p><strong>👑 Админ ID:</strong> ${ADMIN_ID}</p>
                         <p><strong>📱 Основное приложение:</strong> <a href="${MAIN_APP_URL}" target="_blank">${MAIN_APP_URL}</a></p>
+                        <p><strong>🗄️  Supabase:</strong> ${SUPABASE_URL}</p>
                         <p><strong>🌐 Режим работы:</strong> ${NODE_ENV}</p>
                         <p><strong>🚀 Статус:</strong> Активен</p>
                         <p><strong>📅 Время сервера:</strong> ${new Date().toLocaleString('ru-RU')}</p>
                     </div>
-                    
-                    <h3>Как использовать:</h3>
-                    <ol>
-                        <li>Откройте Telegram и найдите бота</li>
-                        <li>Отправьте команду <code>/start</code></li>
-                        <li>Выберите роль (учитель/менеджер)</li>
-                        <li>Введите ФИО</li>
-                        <li>Админ получит заявку на одобрение</li>
-                        <li>После одобрения откроется приложение: ${MAIN_APP_URL}</li>
-                    </ol>
                 </div>
             </body>
         </html>
@@ -732,3 +847,5 @@ process.on('SIGTERM', () => {
     db.close();
     process.exit(0);
 });
+
+
