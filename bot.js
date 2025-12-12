@@ -78,29 +78,57 @@ db.serialize(() => {
  */
 async function saveUserToSupabase(telegramId, firstName, lastName, role, username = null) {
   try {
+    // Определяем окончательную роль (без 'pending_')
+    const finalRole = role.replace('pending_', '');
+    
     // Сначала проверяем, существует ли пользователь
     const existingUser = await checkUserInSupabase(telegramId);
     if (existingUser) {
       console.log(`ℹ️  Пользователь ${telegramId} уже существует в Supabase`);
+      console.log(`📋 Текущая роль в Supabase: ${existingUser.role}, ожидаемая роль: ${finalRole}`);
+      
+      // Подготавливаем данные для обновления
+      const updateData = {};
+      let needsUpdate = false;
+      
       // Обновляем статус на approved, если нужно
       if (!existingUser.approved) {
+        updateData.approved = true;
+        needsUpdate = true;
+      }
+      
+      // Обновляем роль, если она отличается
+      if (existingUser.role !== finalRole) {
+        console.log(`⚠️  Роль отличается! Обновляем с "${existingUser.role}" на "${finalRole}"`);
+        updateData.role = finalRole;
+        needsUpdate = true;
+      }
+      
+      // Если нужно обновить данные
+      if (needsUpdate) {
         const updateResponse = await fetch(
           `${SUPABASE_URL}/rest/v1/users?telegram_id=eq.${telegramId}`,
           {
             method: 'PATCH',
             headers: createHeaders(true),
-            body: JSON.stringify({ approved: true })
+            body: JSON.stringify(updateData)
           }
         );
         if (updateResponse.ok) {
-          console.log(`✅ Статус пользователя обновлен на approved`);
+          console.log(`✅ Данные пользователя обновлены:`, updateData);
+          // Получаем обновленные данные
+          const updated = await checkUserInSupabase(telegramId);
+          if (updated) {
+            return { success: true, user: updated, userId: updated.id };
+          }
+        } else {
+          const errorText = await updateResponse.text();
+          console.error('❌ Ошибка обновления пользователя:', errorText);
         }
       }
+      
       return { success: true, user: existingUser, userId: existingUser.id };
     }
-    
-    // Определяем окончательную роль (без 'pending_')
-    const finalRole = role.replace('pending_', '');
     
     // Разделяем ФИО на имя и фамилию
     const nameParts = firstName.trim().split(/\s+/);
@@ -635,6 +663,7 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
         try {
             if (isApproved) {
                 // Сохраняем в Supabase
+                console.log(`💾 Сохранение пользователя ${targetUserId} в Supabase с ролью: ${targetUser.role}`);
                 const supabaseResult = await saveUserToSupabase(
                     targetUserId,
                     targetUser.full_name,
@@ -642,6 +671,7 @@ async function handleAdminAction(adminId, targetUserId, isApproved, query) {
                     targetUser.role,
                     targetUser.telegram_username
                 );
+                console.log(`📊 Результат сохранения:`, supabaseResult);
                 
                 // Проверяем результат или наличие пользователя в Supabase
                 let userSaved = supabaseResult.success;
